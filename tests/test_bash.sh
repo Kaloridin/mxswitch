@@ -36,6 +36,14 @@ if hidpp_build_frame 16 255 0 0 1 2 3 4 5 6 7 >/dev/null 2>&1; then
     fail=$((fail+1)); echo 'FAIL: oversize frame accepted'
 else pass=$((pass+1)); fi
 
+# hidpp_write must emit the frame byte for byte, including 0x0a (newline) and
+# 0x00. Whether it does so in a single write() cannot be checked portably here;
+# see the comment on hidpp_write.
+for hex in 11ff000a18140000000000000000000000000000 10ff0a0a000000; do
+    got=$(hidpp_write 1 "$hex" | od -An -v -tx1 | tr -d ' \n')
+    check "hidpp_write $hex" "$hex" "$got"
+done
+
 # --- config -----------------------------------------------------------------
 tmp=$(mktemp)
 trap 'rm -f "$tmp"' EXIT

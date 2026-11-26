@@ -142,15 +142,27 @@ logitech_hidraws() {
                   ${kbds[@]+"${kbds[@]}"}
 }
 
+# hidpp_write <fd> <frame_hex>
+# hidraw takes one report per write(), so the frame must go out in one call.
+# bash line-buffers its output and flushes at every 0x0a byte, which is a
+# newline. That byte is common in frames (SW_ID=10 puts it in byte 3 of every
+# function-0 request). A plain printf therefore splits the report, and the
+# device ignores both pieces. dd with iflag=fullblock gathers the whole frame
+# from the pipe and writes it once.
+hidpp_write() {
+    local fd=$1 hex=$2 esc="" i
+    for (( i=0; i<${#hex}; i+=2 )); do esc+="\\x${hex:i:2}"; done
+    printf '%b' "$esc" |
+        dd bs=$(( ${#hex} / 2 )) count=1 iflag=fullblock status=none >&"$fd" 2>/dev/null
+}
+
 # hidpp_send <fd> <report_id> <dev_idx> <feature_idx> <function> [params...]
 # Fire-and-forget; used for setCurrentHost, which never replies.
 hidpp_send() {
     local fd=$1 rid=$2 didx=$3 fidx=$4 func=$5; shift 5
     local hex; hex=$(hidpp_build_frame "$rid" "$didx" "$fidx" "$func" "$@") \
         || return 1
-    local esc="" i
-    for (( i=0; i<${#hex}; i+=2 )); do esc+="\\x${hex:i:2}"; done
-    printf '%b' "$esc" >&"$fd"
+    hidpp_write "$fd" "$hex"
 }
 
 # hidpp_call <fd> <report_id> <dev_idx> <feature_idx> <function> [params...]
@@ -161,9 +173,7 @@ hidpp_call() {
     timeout 0.01 dd bs=64 count=16 status=none <&"$fd" >/dev/null 2>&1 || true
     local hex; hex=$(hidpp_build_frame "$rid" "$didx" "$fidx" "$func" "$@") \
         || return 1
-    local esc="" i
-    for (( i=0; i<${#hex}; i+=2 )); do esc+="\\x${hex:i:2}"; done
-    printf '%b' "$esc" >&"$fd" || return 1
+    hidpp_write "$fd" "$hex" || return 1
 
     # Replies share the pipe with unsolicited notifications, so read a few.
     local try reply verdict
